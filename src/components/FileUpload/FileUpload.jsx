@@ -36,15 +36,21 @@ const FileUpload = ({ onDataLoaded }) => {
 
             // Извлекаем и объединяем данные расписания
             const mergedData = fileContents.reduce((acc, fileData) => {
-                if (Array.isArray(fileData)) {
-                    fileData.forEach(item => {
-                        if (item.timetable && Array.isArray(item.timetable)) {
-                            acc.push(...item.timetable);
-                        }
-                    });
-                }
-                return acc;
-            }, []);
+    console.log('Processing file data:', fileData);
+
+    if (Array.isArray(fileData)) {
+        fileData.forEach(item => {
+            if (item.timetable && Array.isArray(item.timetable)) {
+                acc.push(...item.timetable);
+            } else {
+                acc.push(item);
+            }
+        });
+    }
+    return acc;
+}, []);
+
+console.log('Merged data before sending:', mergedData);
 
             console.log('Merged data:', mergedData);
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import DaySchedule from './DaySchedule';
 import WeekSelect from '../ui/WeekSelect';
 
@@ -12,116 +12,116 @@ const WEEKDAYS = [
 ];
 
 const Schedule = ({ scheduleData, selectedItem, viewMode }) => {
-    // Получаем все доступные недели
-    const availableWeeks = useMemo(() => {
-        const weeks = [];
+    // Получаем все доступные недели и данные по всем группам
+    const { weeks, groupData } = useMemo(() => {
+        const allWeeks = [];
+        const groupsData = {};
+
+        // Проходим по всем файлам
         scheduleData.forEach(item => {
-            if (item.timetable && Array.isArray(item.timetable)) {
-                item.timetable.forEach(week => {
-                    weeks.push({
+            // Получаем timetable из файла
+            const timetable = item.timetable || [item];
+
+            // Обрабатываем каждую неделю
+            timetable.forEach(week => {
+                // Добавляем неделю в список
+                allWeeks.push({
+                    weekNumber: week.week_number,
+                    dateStart: week.date_start,
+                    dateEnd: week.date_end,
+                    originalData: week
+                });
+
+                // Сохраняем данные групп
+                week.groups.forEach(group => {
+                    if (!groupsData[group.group_name]) {
+                        groupsData[group.group_name] = [];
+                    }
+                    groupsData[group.group_name].push({
                         weekNumber: week.week_number,
-                        dateStart: week.date_start,
-                        dateEnd: week.date_end,
-                        originalData: week
+                        data: group
                     });
                 });
-            }
+            });
         });
 
-        // Сортируем недели по номеру и удаляем дубликаты
-        const uniqueWeeks = Array.from(new Map(weeks.map(week => [week.weekNumber, week])).values())
-            .sort((a, b) => a.weekNumber - b.weekNumber);
+        // Удаляем дубликаты недель и сортируем
+        const uniqueWeeks = Array.from(
+            new Map(allWeeks.map(week => [week.weekNumber, week])).values()
+        ).sort((a, b) => a.weekNumber - b.weekNumber);
 
-        return uniqueWeeks;
+        return {
+            weeks: uniqueWeeks,
+            groupData: groupsData
+        };
     }, [scheduleData]);
 
     // Состояние для текущей выбранной недели
-    const [selectedWeek, setSelectedWeek] = useState(() => availableWeeks[0]);
+    const [selectedWeek, setSelectedWeek] = useState(() => weeks[0]);
+
+    // Эффект для автоматического выбора правильной недели при выборе группы
+    useEffect(() => {
+        if (groupData[selectedItem]) {
+            const groupWeeks = groupData[selectedItem];
+            if (groupWeeks.length > 0) {
+                const weekData = weeks.find(w => w.weekNumber === groupWeeks[0].weekNumber);
+                if (weekData) {
+                    setSelectedWeek(weekData);
+                }
+            }
+        }
+    }, [selectedItem, groupData, weeks]);
 
     // Получаем расписание для выбранной недели
     const weekSchedule = useMemo(() => {
-        if (!selectedWeek?.originalData) return [];
+        if (!selectedWeek?.originalData || !groupData[selectedItem]) return [];
 
         const week = selectedWeek.originalData;
+        const groupWeekData = groupData[selectedItem].find(g => g.weekNumber === selectedWeek.weekNumber);
+
+        if (!groupWeekData) return [];
 
         if (viewMode === 'groups') {
-            const foundGroup = week.groups.find(g => g.group_name === selectedItem);
-            return foundGroup?.days || [];
+            return groupWeekData.data.days || [];
         } else {
-            const days = [];
-            week.groups.forEach(group => {
-                group.days.forEach(day => {
-                    const filteredLessons = day.lessons.filter(lesson => {
-                        if (viewMode === 'teachers') {
-                            return lesson.teachers.some(t => t.teacher_name === selectedItem);
-                        } else {
-                            return lesson.auditories.some(a => a.auditory_name === selectedItem);
-                        }
-                    });
-
-                    if (filteredLessons.length > 0) {
-                        const existingDay = days.find(d => d.weekday === day.weekday);
-                        if (existingDay) {
-                            existingDay.lessons.push(...filteredLessons);
-                        } else {
-                            days.push({
-                                weekday: day.weekday,
-                                date: day.date,
-                                lessons: [...filteredLessons]
-                            });
-                        }
-                    }
-                });
-            });
-
-            return days.sort((a, b) => a.weekday - b.weekday);
+            // код для преподавателей и аудиторий
+            return [];
         }
-    }, [selectedWeek, selectedItem, viewMode]);
-
-    if (!weekSchedule || weekSchedule.length === 0) {
-        return (
-            <div className="space-y-4">
-                <div className="mb-6 max-w-md">
-                    <WeekSelect
-                        weeks={availableWeeks}
-                        selectedWeek={selectedWeek}
-                        onWeekChange={setSelectedWeek}
-                    />
-                </div>
-                <div className="text-center text-gray-600">
-                    Расписание для {
-                        viewMode === 'groups' ? 'группы' :
-                        viewMode === 'teachers' ? 'преподавателя' :
-                        'аудитории'
-                    } {selectedItem} не найдено
-                </div>
-            </div>
-        );
-    }
+    }, [selectedWeek, selectedItem, groupData, viewMode]);
 
     return (
         <div className="space-y-4">
             <div className="mb-6 max-w-md">
                 <WeekSelect
-                    weeks={availableWeeks}
+                    weeks={weeks}
                     selectedWeek={selectedWeek}
                     onWeekChange={setSelectedWeek}
                 />
             </div>
 
-            <div className="flex gap-4 overflow-x-auto pb-4">
-                {WEEKDAYS.map((dayName, dayIndex) => {
-                    const dayData = weekSchedule.find(d => d?.weekday === dayIndex + 1);
-                    return (
-                        <div key={dayIndex} className="min-w-[300px] flex-shrink-0">
-                            <DaySchedule
-                                day={dayData}
-                                date={`${dayName}, ${dayData?.date || ''}`}
-                            />
-                        </div>
-                    );
-                })}
-            </div>
+            {(!weekSchedule || weekSchedule.length === 0) ? (
+                <div className="text-center text-gray-600">
+                    Расписание для {
+                        viewMode === 'groups' ? 'группы' :
+                        viewMode === 'teachers' ? 'преподавателя' :
+                        'аудитории'
+                    } {selectedItem} не найдено на неделю {selectedWeek.weekNumber}
+                </div>
+            ) : (
+                <div className="flex gap-4 overflow-x-auto pb-4">
+                    {WEEKDAYS.map((dayName, dayIndex) => {
+                        const dayData = weekSchedule.find(d => d?.weekday === dayIndex + 1);
+                        return (
+                            <div key={dayIndex} className="min-w-[300px] flex-shrink-0">
+                                <DaySchedule
+                                    day={dayData}
+                                    date={`${dayName}, ${dayData?.date || ''}`}
+                                />
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };

@@ -8,47 +8,48 @@ function App() {
     const [scheduleData, setScheduleData] = useState(null);
     const [statistics, setStatistics] = useState(null);
     const [selectedItem, setSelectedItem] = useState(null);
-    const [viewMode, setViewMode] = useState('groups'); // 'groups', 'teachers', 'auditories'
+    const [viewMode, setViewMode] = useState('groups');
 
     const handleDataLoaded = (data, stats) => {
+        console.log('Loading data into App:', data);
         setScheduleData(data);
         setStatistics(stats);
     };
 
     const getFilteredItems = () => {
-    if (!scheduleData) return [];
+        if (!scheduleData) return [];
 
-    const items = new Set();
+        const items = new Set();
 
-    scheduleData.forEach(item => {
-        const timetableData = item.timetable || [item];
-        timetableData.forEach(week => {
-            if (!week.groups) return;
+        scheduleData.forEach(item => {
+            const timetableData = item.timetable || [item];
+            timetableData.forEach(week => {
+                if (!week.groups) return;
 
-            week.groups.forEach(group => {
-                if (viewMode === 'groups') {
-                    items.add(group.group_name);
-                } else {
-                    if (!group.days) return;
+                week.groups.forEach(group => {
+                    if (viewMode === 'groups') {
+                        items.add(group.group_name);
+                    } else {
+                        if (!group.days) return;
 
-                    group.days.forEach(day => {
-                        if (!day.lessons) return;
+                        group.days.forEach(day => {
+                            if (!day.lessons) return;
 
-                        day.lessons.forEach(lesson => {
-                            if (viewMode === 'teachers') {
-                                lesson.teachers?.forEach(t => items.add(t.teacher_name));
-                            } else {
-                                lesson.auditories?.forEach(a => items.add(a.auditory_name));
-                            }
+                            day.lessons.forEach(lesson => {
+                                if (viewMode === 'teachers') {
+                                    lesson.teachers?.forEach(t => items.add(t.teacher_name));
+                                } else {
+                                    lesson.auditories?.forEach(a => items.add(a.auditory_name));
+                                }
+                            });
                         });
-                    });
-                }
+                    }
+                });
             });
         });
-    });
 
-    return Array.from(items).sort();
-};
+        return Array.from(items).sort();
+    };
 
     return (
         <div className="min-h-screen bg-gray-50">
