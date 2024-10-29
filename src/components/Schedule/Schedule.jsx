@@ -5,6 +5,7 @@ import Button from '../ui/Button';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "../ui/alert-dialog";
 
 
+
 const WEEKDAYS = [
     'Понедельник',
     'Вторник',
@@ -157,79 +158,144 @@ const { weeks, scheduleItems, maxDays } = useMemo(() => {
                     }
                 });
             } else if (viewMode === 'teachers') {
-    week.groups?.forEach(group => {
-        if (!group || !Array.isArray(group.days)) return;
+                week.groups?.forEach(group => {
+                    if (!group || !Array.isArray(group.days)) return;
 
-        group.days?.forEach(day => {
-            if (!day || !Array.isArray(day.lessons)) return;
+                    group.days?.forEach(day => {
+                        if (!day || !Array.isArray(day.lessons)) return;
 
-            day.lessons?.forEach(lesson => {
-                if (!lesson || !Array.isArray(lesson.teachers)) return;
+                        day.lessons?.forEach(lesson => {
+                            if (!lesson || !Array.isArray(lesson.teachers)) return;
 
-                lesson.teachers?.forEach(teacher => {
-                    if (!teacher || !teacher.teacher_name) return;
-                    if (teacher.teacher_name === selectedItem) {
-                        if (!itemsData.has(teacher.teacher_name)) {
-                            itemsData.set(teacher.teacher_name, new Map());
-                        }
+                            lesson.teachers?.forEach(teacher => {
+                                if (!teacher || !teacher.teacher_name) return;
+                                if (teacher.teacher_name === selectedItem) {
+                                    if (!itemsData.has(teacher.teacher_name)) {
+                                        itemsData.set(teacher.teacher_name, new Map());
+                                    }
 
-                        const teacherWeeks = itemsData.get(teacher.teacher_name);
-                        if (!teacherWeeks.has(week.week_number)) {
-                            teacherWeeks.set(week.week_number, {
-                                weekNumber: week.week_number,
-                                days: Array(maxDaysInWeek).fill(null).map((_, index) => ({
-                                    weekday: index + 1,
-                                    date: day.date || '',
-                                    lessons: []
-                                }))
-                            });
-                        }
+                                    const teacherWeeks = itemsData.get(teacher.teacher_name);
+                                    if (!teacherWeeks.has(week.week_number)) {
+                                        teacherWeeks.set(week.week_number, {
+                                            weekNumber: week.week_number,
+                                            days: Array(maxDaysInWeek).fill(null).map((_, index) => ({
+                                                weekday: index + 1,
+                                                date: day.date || '',
+                                                lessons: []
+                                            }))
+                                        });
+                                    }
 
-                        const teacherWeek = teacherWeeks.get(week.week_number);
-                        const dayIndex = day.weekday - 1;
+                                    const teacherWeek = teacherWeeks.get(week.week_number);
+                                    const dayIndex = day.weekday - 1;
 
-                        if (dayIndex >= 0 && dayIndex < maxDaysInWeek) {
-                            const daySchedule = teacherWeek.days[dayIndex];
-                            if (!daySchedule.lessons) {
-                                daySchedule.lessons = [];
-                            }
+                                    if (dayIndex >= 0 && dayIndex < maxDaysInWeek) {
+                                        const daySchedule = teacherWeek.days[dayIndex];
+                                        if (!daySchedule.lessons) {
+                                            daySchedule.lessons = [];
+                                        }
 
-                            // Создаем новый урок с информацией о подгруппе
-                            const newLesson = {
-                                ...lesson,
-                                groupName: group.group_name,
-                                // Добавляем информацию о подгруппе в отображаемое имя группы
-                                displayGroupName: lesson.subgroup ?
-                                    `${group.group_name} (подгр. ${lesson.subgroup})` :
-                                    group.group_name
-                            };
+                                        const newLesson = {
+                                            ...lesson,
+                                            groupName: group.group_name,
+                                            displayGroupName: lesson.subgroup ?
+                                                `${group.group_name} (подгр. ${lesson.subgroup})` :
+                                                group.group_name
+                                        };
 
-                            // Проверяем, нет ли уже такого урока
-                            const existingLessonIndex = daySchedule.lessons.findIndex(
-                                l => l.time === lesson.time &&
-                                     l.subject === lesson.subject &&
-                                     l.groupName === group.group_name &&
-                                     l.subgroup === lesson.subgroup // Добавляем проверку подгруппы
-                            );
+                                        const existingLessonIndex = daySchedule.lessons.findIndex(
+                                            l => l.time === lesson.time &&
+                                                l.subject === lesson.subject &&
+                                                l.groupName === group.group_name &&
+                                                l.subgroup === lesson.subgroup
+                                        );
 
-                            if (existingLessonIndex === -1) {
-                                daySchedule.lessons.push(newLesson);
-                            }
+                                        if (existingLessonIndex === -1) {
+                                            daySchedule.lessons.push(newLesson);
+                                        }
 
-                            // Сортируем уроки по времени и подгруппам
-                            daySchedule.lessons.sort((a, b) => {
-                                if (a.time === b.time) {
-                                    return (a.subgroup || 0) - (b.subgroup || 0);
+                                        daySchedule.lessons.sort((a, b) => {
+                                            if (a.time === b.time) {
+                                                return (a.subgroup || 0) - (b.subgroup || 0);
+                                            }
+                                            return (a.time || 0) - (b.time || 0);
+                                        });
+                                    }
                                 }
-                                return (a.time || 0) - (b.time || 0);
                             });
-                        }
-                    }
+                        });
+                    });
                 });
-            });
-        });
-    });
-}
+            } else if (viewMode === 'auditories') {
+                week.groups?.forEach(group => {
+                    if (!group || !Array.isArray(group.days)) return;
+
+                    group.days?.forEach(day => {
+                        if (!day || !Array.isArray(day.lessons)) return;
+
+                        day.lessons?.forEach(lesson => {
+                            if (!lesson || !Array.isArray(lesson.auditories)) return;
+
+                            lesson.auditories?.forEach(auditory => {
+                                if (!auditory || !auditory.auditory_name) return;
+                                if (auditory.auditory_name === selectedItem) {
+                                    if (!itemsData.has(auditory.auditory_name)) {
+                                        itemsData.set(auditory.auditory_name, new Map());
+                                    }
+
+                                    const auditoryWeeks = itemsData.get(auditory.auditory_name);
+                                    if (!auditoryWeeks.has(week.week_number)) {
+                                        auditoryWeeks.set(week.week_number, {
+                                            weekNumber: week.week_number,
+                                            days: Array(maxDaysInWeek).fill(null).map((_, index) => ({
+                                                weekday: index + 1,
+                                                date: day.date || '',
+                                                lessons: []
+                                            }))
+                                        });
+                                    }
+
+                                    const auditoryWeek = auditoryWeeks.get(week.week_number);
+                                    const dayIndex = day.weekday - 1;
+
+                                    if (dayIndex >= 0 && dayIndex < maxDaysInWeek) {
+                                        const daySchedule = auditoryWeek.days[dayIndex];
+                                        if (!daySchedule.lessons) {
+                                            daySchedule.lessons = [];
+                                        }
+
+                                        const newLesson = {
+                                            ...lesson,
+                                            groupName: group.group_name,
+                                            displayGroupName: lesson.subgroup ?
+                                                `${group.group_name} (подгр. ${lesson.subgroup})` :
+                                                group.group_name
+                                        };
+
+                                        const existingLessonIndex = daySchedule.lessons.findIndex(
+                                            l => l.time === lesson.time &&
+                                                l.subject === lesson.subject &&
+                                                l.groupName === group.group_name &&
+                                                l.subgroup === lesson.subgroup
+                                        );
+
+                                        if (existingLessonIndex === -1) {
+                                            daySchedule.lessons.push(newLesson);
+                                        }
+
+                                        daySchedule.lessons.sort((a, b) => {
+                                            if (a.time === b.time) {
+                                                return (a.subgroup || 0) - (b.subgroup || 0);
+                                            }
+                                            return (a.time || 0) - (b.time || 0);
+                                        });
+                                    }
+                                }
+                            });
+                        });
+                    });
+                });
+            }
         });
     });
 
@@ -242,7 +308,6 @@ const { weeks, scheduleItems, maxDays } = useMemo(() => {
         maxDays: maxDaysInWeek
     };
 }, [scheduleData, selectedItem, viewMode]);
-
     const [selectedWeek, setSelectedWeek] = useState(() => weeks[0] || null);
 
     useEffect(() => {
