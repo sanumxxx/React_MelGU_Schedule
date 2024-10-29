@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FileUpload from './components/FileUpload/FileUpload';
 import GroupSelect from './components/GroupSelect/GroupSelect';
 import Schedule from './components/Schedule/Schedule';
 import ViewModeToggle from './components/ui/ViewModeToggle';
-
 
 const StatCard = ({ title, value }) => (
     <div className="bg-gray-50 rounded-lg p-4">
@@ -13,6 +12,7 @@ const StatCard = ({ title, value }) => (
 );
 
 function App() {
+    // Инициализация состояний из localStorage
     const [scheduleData, setScheduleData] = useState(() => {
         const savedData = localStorage.getItem('scheduleData');
         return savedData ? JSON.parse(savedData) : null;
@@ -23,34 +23,34 @@ function App() {
         return savedStats ? JSON.parse(savedStats) : null;
     });
 
-    const [selectedItem, setSelectedItem] = useState(null);
-    const [viewMode, setViewMode] = useState('groups');
+    // Сохраняем текущий режим и выбранный элемент
+    const [viewMode, setViewMode] = useState(() => {
+        return localStorage.getItem('currentViewMode') || 'groups';
+    });
 
-    React.useEffect(() => {
+    const [selectedItem, setSelectedItem] = useState(() => {
+        return localStorage.getItem('selectedItem') || null;
+    });
+
+    // Сохраняем состояние при его изменении
+    useEffect(() => {
+        if (viewMode) {
+            localStorage.setItem('currentViewMode', viewMode);
+        }
+    }, [viewMode]);
+
+    useEffect(() => {
+        if (selectedItem) {
+            localStorage.setItem('selectedItem', selectedItem);
+        }
+    }, [selectedItem]);
+
+    // Сохраняем данные расписания при изменении
+    useEffect(() => {
         if (scheduleData) {
             localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
         }
     }, [scheduleData]);
-
-    React.useEffect(() => {
-        if (statistics) {
-            localStorage.setItem('scheduleStatistics', JSON.stringify(statistics));
-        }
-    }, [statistics]);
-
-    const handleDataLoaded = (data, stats) => {
-        console.log('Loading new data:', data);
-
-        if (scheduleData) {
-            const mergedData = mergeScheduleData(scheduleData, data);
-            setScheduleData(mergedData);
-            const newStats = calculateStatistics(mergedData);
-            setStatistics(newStats);
-        } else {
-            setScheduleData(data);
-            setStatistics(stats);
-        }
-    };
 
     const mergeScheduleData = (oldData, newData) => {
         const allData = [...oldData, ...newData];
@@ -70,6 +70,20 @@ function App() {
         });
 
         return uniqueData;
+    };
+
+    const handleDataLoaded = (data, stats) => {
+        console.log('Loading new data:', data);
+
+        if (scheduleData) {
+            const mergedData = mergeScheduleData(scheduleData, data);
+            setScheduleData(mergedData);
+            const newStats = calculateStatistics(mergedData);
+            setStatistics(newStats);
+        } else {
+            setScheduleData(data);
+            setStatistics(stats);
+        }
     };
 
     const calculateStatistics = (data) => {
@@ -131,61 +145,44 @@ function App() {
     };
 
     const getFilteredItems = () => {
-    if (!scheduleData) return [];
+        if (!scheduleData) return [];
 
-    const items = new Set();
+        const items = new Set();
 
-    scheduleData.forEach(weekItem => {
-        if (!weekItem) return;
-
-        const timetable = weekItem.timetable || [weekItem];
-
-        timetable.forEach(week => {
-            if (!week || !Array.isArray(week.groups)) return;
-
-            week.groups.forEach(group => {
-                if (!group || !Array.isArray(group.days)) return;
-
-                if (viewMode === 'groups') {
-                    if (group.group_name) {
+        scheduleData.forEach(week => {
+            if (week.groups) {
+                week.groups.forEach(group => {
+                    if (viewMode === 'groups') {
                         items.add(group.group_name);
-                    }
-                } else {
-                    group.days.forEach(day => {
-                        if (!day || !Array.isArray(day.lessons)) return;
-
-                        day.lessons.forEach(lesson => {
-                            if (!lesson) return;
-
-                            if (viewMode === 'teachers' && Array.isArray(lesson.teachers)) {
-                                lesson.teachers.forEach(teacher => {
-                                    if (teacher && teacher.teacher_name) {
-                                        items.add(teacher.teacher_name);
-                                    }
-                                });
-                            } else if (viewMode === 'auditories' && Array.isArray(lesson.auditories)) {
-                                lesson.auditories.forEach(auditory => {
-                                    if (auditory && auditory.auditory_name) {
-                                        items.add(auditory.auditory_name);
+                    } else if (group.days) {
+                        group.days.forEach(day => {
+                            if (day.lessons) {
+                                day.lessons.forEach(lesson => {
+                                    if (viewMode === 'teachers') {
+                                        lesson.teachers?.forEach(t => items.add(t.teacher_name));
+                                    } else {
+                                        lesson.auditories?.forEach(a => items.add(a.auditory_name));
                                     }
                                 });
                             }
                         });
-                    });
-                }
-            });
+                    }
+                });
+            }
         });
-    });
 
-    return Array.from(items).sort();
-};
+        return Array.from(items).sort();
+    };
 
     const handleClearData = () => {
         localStorage.removeItem('scheduleData');
         localStorage.removeItem('scheduleStatistics');
+        localStorage.removeItem('currentViewMode');
+        localStorage.removeItem('selectedItem');
         setScheduleData(null);
         setStatistics(null);
         setSelectedItem(null);
+        setViewMode('groups');
     };
 
     return (
@@ -246,13 +243,13 @@ function App() {
                             ← Назад к списку
                         </button>
                         <Schedule
-    scheduleData={scheduleData}
-    selectedItem={selectedItem}
-    viewMode={viewMode}
-    setViewMode={setViewMode} // Передаем функцию переключения режима
-    setSelectedItem={setSelectedItem} // Передаем функцию обновления выбранного элемента
-/>
-
+                            scheduleData={scheduleData}
+                            selectedItem={selectedItem}
+                            viewMode={viewMode}
+                            setViewMode={setViewMode}
+                            setSelectedItem={setSelectedItem}
+                            setScheduleData={setScheduleData}
+                        />
                     </div>
                 )}
             </div>
