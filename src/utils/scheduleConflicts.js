@@ -54,6 +54,28 @@ export const checkTeacherTimeslotConflicts = (lessons, teacherId) => {
 
 
 
+const processTeacherTimeSlot = (lessons) => {
+    if (lessons.length <= 1) return false;
+
+    // Собираем все уникальные комбинации предмет+аудитория
+    const uniqueCombinations = new Set();
+
+    for (const lesson of lessons) {
+        if (!lesson) continue;
+
+        // Если у урока нет аудиторий или предмета, пропускаем
+        if (!lesson.auditories || !lesson.subject) continue;
+
+        const auditories = lesson.auditories.map(a => a.auditory_name).sort().join(',');
+        const key = `${lesson.subject}|${auditories}`;
+        uniqueCombinations.add(key);
+    }
+
+    // Если есть больше одной уникальной комбинации - это конфликт
+    return uniqueCombinations.size > 1;
+};
+
+
 
 export const findScheduleConflicts = (scheduleData, mode = 'groups') => {
     const conflicts = new Set();
@@ -63,105 +85,47 @@ export const findScheduleConflicts = (scheduleData, mode = 'groups') => {
         return { conflicts, scheduleByEntity };
     }
 
-    // Функция для расчета процента совпадения двух строк
-    const calculateSimilarity = (str1, str2) => {
-        const words1 = new Set(str1.toLowerCase().split(/\s+/));
-        const words2 = new Set(str2.toLowerCase().split(/\s+/));
-        const intersection = new Set([...words1].filter(word => words2.has(word)));
-        const similarity = (intersection.size * 2) / (words1.size + words2.size);
-        return similarity >= 0.5; // Возвращаем true, если совпадение 50% или больше
-    };
-
     scheduleData.forEach(weekItem => {
+        if (!weekItem) return;
+
         const timetable = weekItem.timetable || [weekItem];
 
         timetable.forEach(week => {
-            week.groups?.forEach(group => {
-                group.days?.forEach(day => {
-                    day.lessons?.forEach(lesson => {
-                        if (mode === 'auditories') {
-                            lesson.auditories?.forEach(auditory => {
-                                const auditoryId = auditory.auditory_name;
-                                const timeKey = `${week.week_number}-${day.weekday}-${lesson.time}`;
+            if (!week || !Array.isArray(week.groups)) return;
 
-                                if (!scheduleByEntity.has(auditoryId)) {
-                                    scheduleByEntity.set(auditoryId, new Map());
-                                }
-                                if (!scheduleByEntity.get(auditoryId).has(timeKey)) {
-                                    scheduleByEntity.get(auditoryId).set(timeKey, []);
-                                }
+            week.groups.forEach(group => {
+                if (!group || !Array.isArray(group.days)) return;
 
-                                scheduleByEntity.get(auditoryId).get(timeKey).push({
-                                    ...lesson,
-                                    groupName: group.group_name
-                                });
+                group.days.forEach(day => {
+                    if (!day || !Array.isArray(day.lessons)) return;
 
-                                const lessonsAtSameTime = scheduleByEntity.get(auditoryId).get(timeKey);
+                    day.lessons.forEach(lesson => {
+                        if (!lesson || !Array.isArray(lesson.teachers)) return;
 
-                                // Проверка конфликтов для аудиторий
-                                const uniqueLessons = new Set();
+                        lesson.teachers.forEach(teacher => {
+                            if (!teacher || !teacher.teacher_name) return;
 
-                                for (const l of lessonsAtSameTime) {
-                                    let isSimilar = false;
-                                    for (const storedLesson of uniqueLessons) {
-                                        const [storedSubject, storedAuditory] = storedLesson;
-                                        if (calculateSimilarity(storedSubject, l.subject) && storedAuditory === l.auditories?.[0]?.auditory_name) {
-                                            isSimilar = true;
-                                            break;
-                                        }
-                                    }
+                            const teacherId = teacher.teacher_name;
+                            const timeKey = `${week.week_number}-${day.weekday}-${lesson.time}`;
 
-                                    if (!isSimilar) {
-                                        uniqueLessons.add([l.subject, l.auditories?.[0]?.auditory_name]);
-                                    }
-                                }
+                            if (!scheduleByEntity.has(teacherId)) {
+                                scheduleByEntity.set(teacherId, new Map());
+                            }
+                            if (!scheduleByEntity.get(teacherId).has(timeKey)) {
+                                scheduleByEntity.get(teacherId).set(timeKey, []);
+                            }
 
-                                if (uniqueLessons.size > 1) {
-                                    conflicts.add(auditoryId);
-                                }
+                            scheduleByEntity.get(teacherId).get(timeKey).push({
+                                ...lesson,
+                                groupName: group.group_name
                             });
-                        } else if (mode === 'teachers') {
-                            lesson.teachers?.forEach(teacher => {
-                                const teacherId = teacher.teacher_name;
-                                const timeKey = `${week.week_number}-${day.weekday}-${lesson.time}`;
 
-                                if (!scheduleByEntity.has(teacherId)) {
-                                    scheduleByEntity.set(teacherId, new Map());
-                                }
-                                if (!scheduleByEntity.get(teacherId).has(timeKey)) {
-                                    scheduleByEntity.get(teacherId).set(timeKey, []);
-                                }
-
-                                scheduleByEntity.get(teacherId).get(timeKey).push({
-                                    ...lesson,
-                                    groupName: group.group_name
-                                });
-
-                                const lessonsAtSameTime = scheduleByEntity.get(teacherId).get(timeKey);
-
-                                // Проверка конфликтов для преподавателей
-                                const uniqueLessons = new Set();
-
-                                for (const l of lessonsAtSameTime) {
-                                    let isSimilar = false;
-                                    for (const storedLesson of uniqueLessons) {
-                                        const [storedSubject, storedAuditory] = storedLesson;
-                                        if (calculateSimilarity(storedSubject, l.subject) && storedAuditory === l.auditories?.[0]?.auditory_name) {
-                                            isSimilar = true;
-                                            break;
-                                        }
-                                    }
-
-                                    if (!isSimilar) {
-                                        uniqueLessons.add([l.subject, l.auditories?.[0]?.auditory_name]);
-                                    }
-                                }
-
-                                if (uniqueLessons.size > 1) {
-                                    conflicts.add(teacherId);
-                                }
-                            });
-                        }
+                            // Проверяем накладки
+                            const lessonsAtSameTime = scheduleByEntity.get(teacherId).get(timeKey);
+                            if (processTeacherTimeSlot(lessonsAtSameTime)) {
+                                conflicts.add(teacherId);
+                            }
+                        });
                     });
                 });
             });
@@ -169,4 +133,11 @@ export const findScheduleConflicts = (scheduleData, mode = 'groups') => {
     });
 
     return { conflicts, scheduleByEntity };
+};const calculateSimilarity = (str1, str2) => {
+    if (!str1 || !str2) return false;
+    const words1 = new Set(str1.toLowerCase().split(/\s+/));
+    const words2 = new Set(str2.toLowerCase().split(/\s+/));
+    const intersection = new Set([...words1].filter(word => words2.has(word)));
+    const similarity = (intersection.size * 2) / (words1.size + words2.size);
+    return similarity >= 0.5;
 };

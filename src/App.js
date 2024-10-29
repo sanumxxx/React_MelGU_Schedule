@@ -4,6 +4,7 @@ import GroupSelect from './components/GroupSelect/GroupSelect';
 import Schedule from './components/Schedule/Schedule';
 import ViewModeToggle from './components/ui/ViewModeToggle';
 
+
 const StatCard = ({ title, value }) => (
     <div className="bg-gray-50 rounded-lg p-4">
         <h3 className="text-sm font-medium text-gray-500">{title}</h3>
@@ -130,34 +131,54 @@ function App() {
     };
 
     const getFilteredItems = () => {
-        if (!scheduleData) return [];
+    if (!scheduleData) return [];
 
-        const items = new Set();
+    const items = new Set();
 
-        scheduleData.forEach(week => {
-            if (week.groups) {
-                week.groups.forEach(group => {
-                    if (viewMode === 'groups') {
+    scheduleData.forEach(weekItem => {
+        if (!weekItem) return;
+
+        const timetable = weekItem.timetable || [weekItem];
+
+        timetable.forEach(week => {
+            if (!week || !Array.isArray(week.groups)) return;
+
+            week.groups.forEach(group => {
+                if (!group || !Array.isArray(group.days)) return;
+
+                if (viewMode === 'groups') {
+                    if (group.group_name) {
                         items.add(group.group_name);
-                    } else if (group.days) {
-                        group.days.forEach(day => {
-                            if (day.lessons) {
-                                day.lessons.forEach(lesson => {
-                                    if (viewMode === 'teachers') {
-                                        lesson.teachers?.forEach(t => items.add(t.teacher_name));
-                                    } else {
-                                        lesson.auditories?.forEach(a => items.add(a.auditory_name));
+                    }
+                } else {
+                    group.days.forEach(day => {
+                        if (!day || !Array.isArray(day.lessons)) return;
+
+                        day.lessons.forEach(lesson => {
+                            if (!lesson) return;
+
+                            if (viewMode === 'teachers' && Array.isArray(lesson.teachers)) {
+                                lesson.teachers.forEach(teacher => {
+                                    if (teacher && teacher.teacher_name) {
+                                        items.add(teacher.teacher_name);
+                                    }
+                                });
+                            } else if (viewMode === 'auditories' && Array.isArray(lesson.auditories)) {
+                                lesson.auditories.forEach(auditory => {
+                                    if (auditory && auditory.auditory_name) {
+                                        items.add(auditory.auditory_name);
                                     }
                                 });
                             }
                         });
-                    }
-                });
-            }
+                    });
+                }
+            });
         });
+    });
 
-        return Array.from(items).sort();
-    };
+    return Array.from(items).sort();
+};
 
     const handleClearData = () => {
         localStorage.removeItem('scheduleData');

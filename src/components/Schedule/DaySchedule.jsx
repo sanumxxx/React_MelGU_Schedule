@@ -1,4 +1,8 @@
-import React from 'react';
+
+import React, { useState } from 'react';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "../ui/alert-dialog";
+import ComboboxSelect from '../ui/ComboboxSelect';
+import Button from '../ui/Button';
 
 const TIME_SLOTS = [
     { number: 1, start: "08:00", end: "09:20" },
@@ -11,17 +15,384 @@ const TIME_SLOTS = [
     { number: 8, start: "18:40", end: "20:00" }
 ];
 
-// Функция для расчета процента совпадения двух строк
-const calculateSimilarity = (str1, str2) => {
-    const words1 = new Set(str1.toLowerCase().split(/\s+/));
-    const words2 = new Set(str2.toLowerCase().split(/\s+/));
-    const intersection = new Set([...words1].filter(word => words2.has(word)));
-    const similarity = (intersection.size * 2) / (words1.size + words2.size);
-    return similarity >= 0.5; // Возвращаем true, если совпадение 50% или больше
+const SUBGROUP_OPTIONS = {
+    NONE: 'none',
+    FIRST: 'first',
+    SECOND: 'second',
+    BOTH: 'both'
 };
 
-const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClick, onTeacherClick }) => {
-    if (!day || !day.lessons) {
+const checkConflicts = (lessons) => {
+    if (!Array.isArray(lessons) || lessons.length <= 1) return false;
+
+    // Группируем пары по подгруппам
+    const lessonsBySubgroup = lessons.reduce((acc, lesson) => {
+        if (!lesson) return acc;
+        const subgroup = lesson.subgroup || 0;
+        if (!acc[subgroup]) acc[subgroup] = [];
+        acc[subgroup].push(lesson);
+        return acc;
+    }, {});
+
+    // Проверяем следующие случаи:
+    // 1. Если есть пара для всей группы (подгруппа 0) и еще какие-то пары - конфликт
+    // 2. Если есть несколько пар для одной подгруппы - конфликт
+    // 3. Если есть только пары для разных подгрупп (1, 2) - не конфликт
+
+    // Проверяем наличие пары для всей группы
+    if (lessonsBySubgroup[0]?.length > 0) {
+        // Если есть пара для всей группы и еще какие-то пары - конфликт
+        return Object.keys(lessonsBySubgroup).length > 1;
+    }
+
+    // Проверяем, что все подгруппы имеют только по одной паре
+    return Object.values(lessonsBySubgroup).some(groupLessons => groupLessons.length > 1);
+};
+
+const hasTeacherConflict = (lessons) => {
+    if (!Array.isArray(lessons) || lessons.length <= 1) return false;
+
+    const isSameSubject = (subject1, subject2) => {
+        if (!subject1 || !subject2) return false;
+
+        // Нормализация строк
+        const normalize = (str) => {
+            return str.toLowerCase()
+                .replace(/[()]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+
+        const clean1 = normalize(subject1);
+        const clean2 = normalize(subject2);
+
+        // Обработка случая с подгруппой
+        // Если один из предметов содержит "(подгр" или просто короче,
+        // и начало предметов совпадает - считаем их одним предметом
+        if (clean1.includes('подгр') || clean2.includes('подгр')) {
+            const base1 = clean1.split('подгр')[0].trim();
+            const base2 = clean2.split('подгр')[0].trim();
+            if (base1.startsWith(base2) || base2.startsWith(base1)) {
+                return true;
+            }
+        }
+
+        // Прямое совпадение
+        if (clean1 === clean2) return true;
+
+        // Проверка на то, является ли один предмет подстрокой другого
+        // (для случаев когда один предмет это сокращённая версия другого)
+        if (clean1.includes(clean2) || clean2.includes(clean1)) return true;
+
+        return false;
+    };
+
+    // Группируем пары по времени и проверяем конфликты
+    const lessonsByTime = new Map();
+
+    lessons.forEach(lesson => {
+        if (!lessonsByTime.has(lesson.time)) {
+            lessonsByTime.set(lesson.time, []);
+        }
+        lessonsByTime.get(lesson.time).push(lesson);
+    });
+
+    // Проверяем каждый временной слот
+    for (const [time, timeLessons] of lessonsByTime) {
+        const uniqueLessons = new Map();
+
+        for (const lesson of timeLessons) {
+            const auditories = lesson.auditories?.map(a => a.auditory_name).sort().join(',') || '';
+            let foundMatch = false;
+
+            // Проверяем с уже существующими уроками
+            for (const [existingSubject, existingAuditories] of uniqueLessons.entries()) {
+                if (isSameSubject(existingSubject, lesson.subject)) {
+                    // Если тот же предмет, но разные аудитории - это конфликт
+                    if (existingAuditories !== auditories) {
+                        return true;
+                    }
+                    foundMatch = true;
+                    break;
+                }
+            }
+
+            // Если не нашли похожий предмет, добавляем новый
+            if (!foundMatch) {
+                uniqueLessons.set(lesson.subject, auditories);
+                // Если в одно время больше одного разного предмета - это конфликт
+                if (uniqueLessons.size > 1) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+};
+
+const LessonEditModal = ({ isOpen, onClose, lesson, timeSlot, onSave, uniqueValues }) => {
+    const [subgroupMode, setSubgroupMode] = useState(SUBGROUP_OPTIONS.NONE);
+    const [lessonData, setLessonData] = useState({
+        first: {
+            subject: lesson?.subject || '',
+            teachers: lesson?.teachers || [],
+            auditories: lesson?.auditories || [],
+            type: lesson?.type || '',
+        },
+        second: {
+            subject: '',
+            teachers: [],
+            auditories: [],
+            type: '',
+        }
+    });
+
+    const validateLessonData = (lesson) => {
+        return lesson.subject && 
+               lesson.type && 
+               lesson.teachers.length > 0 && 
+               lesson.teachers[0].teacher_name && 
+               lesson.auditories.length > 0 && 
+               lesson.auditories[0].auditory_name;
+    };
+
+    const handleSave = () => {
+        const newLessons = [];
+
+        if (subgroupMode === SUBGROUP_OPTIONS.NONE) {
+            if (!validateLessonData(lessonData.first)) {
+                alert('Пожалуйста, заполните все поля');
+                return;
+            }
+            newLessons.push({
+                ...lessonData.first,
+                time: timeSlot.number,
+                subgroup: 0
+            });
+        } else if (subgroupMode === SUBGROUP_OPTIONS.BOTH) {
+            if (!validateLessonData(lessonData.first) || !validateLessonData(lessonData.second)) {
+                alert('Пожалуйста, заполните все поля для обеих подгрупп');
+                return;
+            }
+            newLessons.push(
+                {
+                    ...lessonData.first,
+                    time: timeSlot.number,
+                    subgroup: 1
+                },
+                {
+                    ...lessonData.second,
+                    time: timeSlot.number,
+                    subgroup: 2
+                }
+            );
+        } else {
+            const data = subgroupMode === SUBGROUP_OPTIONS.FIRST ? lessonData.first : lessonData.second;
+            if (!validateLessonData(data)) {
+                alert('Пожалуйста, заполните все поля');
+                return;
+            }
+            newLessons.push({
+                ...data,
+                time: timeSlot.number,
+                subgroup: subgroupMode === SUBGROUP_OPTIONS.FIRST ? 1 : 2
+            });
+        }
+
+        onSave(newLessons);
+        onClose();
+    };
+
+    const handleDelete = () => {
+        onSave([]);
+        onClose();
+    };
+
+    const renderSubgroupForm = (subgroup) => (
+        <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                    Предмет
+                </label>
+                <ComboboxSelect
+                    options={uniqueValues.subjects}
+                    value={lessonData[subgroup].subject}
+                    onChange={(value) => setLessonData(prev => ({
+                        ...prev,
+                        [subgroup]: {
+                            ...prev[subgroup],
+                            subject: value
+                        }
+                    }))}
+                    placeholder="Выберите предмет"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                    Тип занятия
+                </label>
+                <ComboboxSelect
+                    options={uniqueValues.types}
+                    value={lessonData[subgroup].type}
+                    onChange={(value) => setLessonData(prev => ({
+                        ...prev,
+                        [subgroup]: {
+                            ...prev[subgroup],
+                            type: value
+                        }
+                    }))}
+                    placeholder="Выберите тип"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                    Преподаватель
+                </label>
+                <ComboboxSelect
+                    options={uniqueValues.teachers}
+                    value={lessonData[subgroup].teachers[0]?.teacher_name || ''}
+                    onChange={(value) => setLessonData(prev => ({
+                        ...prev,
+                        [subgroup]: {
+                            ...prev[subgroup],
+                            teachers: [{ teacher_name: value }]
+                        }
+                    }))}
+                    placeholder="Выберите преподавателя"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                    Аудитория
+                </label>
+                <ComboboxSelect
+                    options={uniqueValues.auditories}
+                    value={lessonData[subgroup].auditories[0]?.auditory_name || ''}
+                    onChange={(value) => setLessonData(prev => ({
+                        ...prev,
+                        [subgroup]: {
+                            ...prev[subgroup],
+                            auditories: [{ auditory_name: value }]
+                        }
+                    }))}
+                    placeholder="Выберите аудиторию"
+                />
+            </div>
+        </div>
+    );
+
+    return (
+        <AlertDialog open={isOpen} onOpenChange={onClose}>
+            <AlertDialogContent className="max-w-2xl">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>
+                        Редактирование пары ({timeSlot.start}-{timeSlot.end})
+                    </AlertDialogTitle>
+                </AlertDialogHeader>
+
+                <div className="space-y-6 py-4">
+                    <div className="flex space-x-4 border-b pb-4">
+                        {[
+                            { id: SUBGROUP_OPTIONS.NONE, label: 'Без подгрупп' },
+                            { id: SUBGROUP_OPTIONS.FIRST, label: '1-ая подгруппа' },
+                            { id: SUBGROUP_OPTIONS.SECOND, label: '2-ая подгруппа' },
+                            { id: SUBGROUP_OPTIONS.BOTH, label: 'Обе подгруппы' }
+                        ].map(option => (
+                            <button
+                                key={option.id}
+                                className={`px-4 py-2 rounded transition-colors ${
+                                    subgroupMode === option.id
+                                    ? 'bg-blue-500 text-white'
+                                    : 'bg-gray-200 hover:bg-gray-300'
+                                }`}
+                                onClick={() => setSubgroupMode(option.id)}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="space-y-4">
+                        {(subgroupMode === SUBGROUP_OPTIONS.NONE || 
+                          subgroupMode === SUBGROUP_OPTIONS.FIRST || 
+                          subgroupMode === SUBGROUP_OPTIONS.BOTH) && (
+                            <div>
+                                <h3 className="font-medium mb-2">
+                                    {subgroupMode === SUBGROUP_OPTIONS.BOTH 
+                                        ? '1-ая подгруппа' 
+                                        : 'Детали пары'}
+                                </h3>
+                                {renderSubgroupForm('first')}
+                            </div>
+                        )}
+
+                        {(subgroupMode === SUBGROUP_OPTIONS.SECOND || 
+                          subgroupMode === SUBGROUP_OPTIONS.BOTH) && (
+                            <div>
+                                <h3 className="font-medium mb-2">2-ая подгруппа</h3>
+                                {renderSubgroupForm('second')}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <AlertDialogFooter>
+                    <div className="flex justify-between w-full">
+                        <Button variant="danger" onClick={handleDelete}>
+                            Удалить пару
+                        </Button>
+                        <div className="space-x-2">
+                            <Button variant="secondary" onClick={onClose}>
+                                Отмена
+                            </Button>
+                            <Button variant="primary" onClick={handleSave}>
+                                Сохранить
+                            </Button>
+                        </div>
+                    </div>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+    );
+};
+
+const DaySchedule = ({ 
+    day, 
+    date, 
+    viewMode, 
+    selectedItem, 
+    isEditMode,
+    onLessonEdit,
+    onGroupClick, 
+    onTeacherClick,
+    dayIndex,
+    uniqueValues,
+    modifiedLessons 
+}) => {
+    const [editingLesson, setEditingLesson] = useState(null);
+    const [editingTimeSlot, setEditingTimeSlot] = useState(null);
+
+    const lessons = day?.lessons || [];
+
+    const handleCellClick = (timeSlot, existingLesson) => {
+        if (!isEditMode) return;
+        setEditingTimeSlot(timeSlot);
+        setEditingLesson(existingLesson);
+    };
+
+    const handleLessonSave = (newLessons) => {
+        if (onLessonEdit) {
+            onLessonEdit(editingTimeSlot.number, newLessons);
+        }
+        setEditingLesson(null);
+        setEditingTimeSlot(null);
+    };
+
+    if (!day) {
         return (
             <div className="border rounded-lg overflow-hidden">
                 <div className="bg-blue-500 p-2">
@@ -33,33 +404,6 @@ const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClic
             </div>
         );
     }
-
-    // Функция для определения конфликта в одном временном слоте
-    const hasConflict = (lessons) => {
-        const uniqueLessons = new Set();
-
-        for (const lesson of lessons) {
-            const key = `${lesson.auditories?.map(a => a.auditory_name).join(',')}_${lesson.type}`;
-            let isSimilar = false;
-
-            for (const storedLesson of uniqueLessons) {
-                const [storedSubject, storedKey] = storedLesson;
-
-                // Проверяем совпадение предметов с 50% порогом
-                if (calculateSimilarity(storedSubject, lesson.subject) && storedKey === key) {
-                    isSimilar = true;
-                    break;
-                }
-            }
-
-            if (!isSimilar) {
-                uniqueLessons.add([lesson.subject, key]);
-            }
-        }
-
-        // Если уникальных ключей больше одного, считаем это конфликтом
-        return uniqueLessons.size > 1;
-    };
 
     return (
         <div className="border rounded-lg overflow-hidden">
@@ -83,20 +427,26 @@ const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClic
                         <th className="px-2 py-1 text-left">Время</th>
                         <th className="px-2 py-1 text-left">Предмет</th>
                         <th className="px-2 py-1 text-left">Преподаватель</th>
-                        <th className="px-2 py-1 text-left">Группа</th>
                         <th className="px-2 py-1 text-left">Аудитория</th>
                         <th className="px-2 py-1 text-left">Тип</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                     {TIME_SLOTS.map((timeSlot) => {
-                        const lessons = day.lessons.filter(lesson => lesson.time === timeSlot.number);
+                        const timeLessons = lessons.filter(lesson => lesson?.time === timeSlot.number) || [];
+                        const isModified = modifiedLessons.has(`${dayIndex}-${timeSlot.number}`);
+                        const hasConflict = viewMode === 'teachers' ?
+                            hasTeacherConflict(timeLessons) :
+                             checkConflicts(timeLessons);
 
-                        if (lessons.length === 0) {
+                        if (timeLessons.length === 0) {
                             return (
-                                <tr key={timeSlot.number}>
+                                <tr
+                                    key={timeSlot.number}
+                                    onClick={() => handleCellClick(timeSlot)}
+                                    className={isEditMode ? "hover:bg-gray-50 cursor-pointer" : ""}
+                                >
                                     <td className="px-2 py-1">{`${timeSlot.start}-${timeSlot.end}`}</td>
-                                    <td className="px-2 py-1">—</td>
                                     <td className="px-2 py-1">—</td>
                                     <td className="px-2 py-1">—</td>
                                     <td className="px-2 py-1">—</td>
@@ -105,34 +455,46 @@ const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClic
                             );
                         }
 
-                        const isConflict = hasConflict(lessons);
-
-                        return lessons.map((lesson, idx) => (
-                            <tr key={`${timeSlot.number}-${idx}`} className={isConflict ? "bg-red-100" : ""}>
+                        return timeLessons.map((lesson, idx) => (
+                            <tr
+                                key={`${timeSlot.number}-${idx}`}
+                                onClick={() => handleCellClick(timeSlot, lesson)}
+                                className={`
+                                    ${isEditMode ? "hover:bg-gray-50 cursor-pointer" : ""}
+                                    ${isModified ? "bg-blue-50" : ""}
+                                    ${hasConflict ? "bg-red-100" : ""}
+                                `}
+                            >
                                 <td className="px-2 py-1">
                                     {idx === 0 ? `${timeSlot.start}-${timeSlot.end}` : ''}
                                 </td>
-                                <td className="px-2 py-1">{lesson.subject}</td>
                                 <td className="px-2 py-1">
-                                    {lesson.teachers.map((teacher, i) => (
-                                        <React.Fragment key={teacher.teacher_name}>
-                                            {i > 0 && ', '}
-                                            <button
-                                                onClick={() => onTeacherClick?.(teacher.teacher_name)}
-                                                className="text-blue-600 hover:underline"
-                                            >
-                                                {teacher.teacher_name}
-                                            </button>
-                                        </React.Fragment>
-                                    ))}
+                                    {lesson.subject}
+                                    {lesson.subgroup !== 0 && (
+                                        <span className="ml-1 text-gray-500">
+                                            (подгр. {lesson.subgroup})
+                                        </span>
+                                    )}
                                 </td>
                                 <td className="px-2 py-1">
-                                    <button
-                                        onClick={() => onGroupClick?.(lesson.groupName)}
-                                        className="text-blue-600 hover:underline"
-                                    >
-                                        {lesson.groupName}
-                                    </button>
+                                    {lesson.teachers?.map((teacher, i) => (
+                                        <React.Fragment key={teacher.teacher_name}>
+                                            {i > 0 && ', '}
+                                            {viewMode === 'teachers' ? (
+                                                teacher.teacher_name
+                                            ) : (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onTeacherClick?.(teacher.teacher_name);
+                                                    }}
+                                                    className="text-blue-600 hover:underline"
+                                                >
+                                                    {teacher.teacher_name}
+                                                </button>
+                                            )}
+                                        </React.Fragment>
+                                    ))}
                                 </td>
                                 <td className="px-2 py-1">
                                     {lesson.auditories?.map(a => a.auditory_name).join(', ')}
@@ -140,11 +502,6 @@ const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClic
                                 <td className="px-2 py-1">
                                     <div className="flex items-center gap-1">
                                         <span>{lesson.type}</span>
-                                        {lesson.subgroup !== 0 && (
-                                            <span className="text-gray-500">
-                                                {` (${lesson.subgroup})`}
-                                            </span>
-                                        )}
                                     </div>
                                 </td>
                             </tr>
@@ -152,6 +509,20 @@ const DaySchedule = ({ day, date, viewMode = 'groups', selectedItem, onGroupClic
                     })}
                 </tbody>
             </table>
+
+            {editingTimeSlot && (
+                <LessonEditModal
+                    isOpen={true}
+                    onClose={() => {
+                        setEditingTimeSlot(null);
+                        setEditingLesson(null);
+                    }}
+                    lesson={editingLesson}
+                    timeSlot={editingTimeSlot}
+                    onSave={handleLessonSave}
+                    uniqueValues={uniqueValues}
+                />
+            )}
         </div>
     );
 };
